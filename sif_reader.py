@@ -2,40 +2,37 @@ import sif_parser
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button
 from scipy.ndimage import map_coordinates
+import csv, os
 
 # ── Load ──────────────────────────────────────────────────────────────────────
-data, info = sif_parser.np_open('07232_TS_shotn.sif')
+data, info = sif_parser.np_open('/Users/orenyang/Documents/GitHub/Thomson_Code/data/07250_TS_shots.sif')
 frame = data[0] if data.ndim == 3 else np.squeeze(data)
 H, W = frame.shape
 
-# ── Layout — all axes fixed, never recreated ──────────────────────────────────
+# ── Layout ────────────────────────────────────────────────────────────────────
 fig = plt.figure(figsize=(16, 8))
 
-# Fixed positions — nothing ever moves these
-ax_img  = fig.add_axes([0.04, 0.18, 0.40, 0.76])   # image
-ax_cbar = fig.add_axes([0.45, 0.18, 0.01, 0.76])   # colorbar (dedicated, not attached to ax_img)
-ax_h    = fig.add_axes([0.50, 0.18, 0.44, 0.76])   # horizontal lineout (always present)
-ax_v    = fig.add_axes([0.83, 0.18, 0.11, 0.76])   # vertical lineout (point mode only)
+ax_img  = fig.add_axes([0.04, 0.18, 0.40, 0.76])
+ax_cbar = fig.add_axes([0.45, 0.18, 0.01, 0.76])
+ax_h    = fig.add_axes([0.50, 0.18, 0.44, 0.76])
+ax_v    = fig.add_axes([0.83, 0.18, 0.11, 0.76])
 ax_vmin = fig.add_axes([0.04, 0.08, 0.18, 0.03])
 ax_vmax = fig.add_axes([0.04, 0.02, 0.18, 0.03])
+ax_btn  = fig.add_axes([0.24, 0.02, 0.14, 0.06])   # ← Save CSV button
 
 im = ax_img.imshow(frame, cmap='inferno', origin='lower',
                    vmin=frame.min(), vmax=frame.max(), aspect='auto')
-
-# Colorbar in its own axes — ax_img is never touched again
 fig.colorbar(im, cax=ax_cbar, label='Intensity')
-
 ax_img.set_title('L-click: crosshair  |  L-drag: line  |  R-drag: box  |  Drag to move/resize', fontsize=9)
-
-ax_v.set_visible(False)  # hidden until point mode
+ax_v.set_visible(False)
 
 s_vmin = Slider(ax_vmin, 'vmin', frame.min(), frame.max(), valinit=frame.min())
 s_vmax = Slider(ax_vmax, 'vmax', frame.min(), frame.max(), valinit=frame.max())
+btn_save = Button(ax_btn, 'Save Lineout CSV', color='0.85', hovercolor='0.70')
 
 def set_lineout_mode(mode):
-    """Resize ax_h and toggle ax_v — no axes created or destroyed."""
     if mode == 'cross':
         ax_h.set_position([0.50, 0.18, 0.32, 0.76])
         ax_v.set_position([0.83, 0.18, 0.11, 0.76])
@@ -48,15 +45,10 @@ def set_lineout_mode(mode):
 rois = []
 
 st = dict(
-    drawing=False,
-    ready_to_draw=False,
-    drag_roi=None,
-    drag_node=None,
-    translating=False,
-    tx0=None, ty0=None,
-    tp1=None, tp2=None,
-    press_x=None, press_y=None,
-    press_btn=None,
+    drawing=False, ready_to_draw=False,
+    drag_roi=None, drag_node=None, translating=False,
+    tx0=None, ty0=None, tp1=None, tp2=None,
+    press_x=None, press_y=None, press_btn=None,
 )
 
 DRAG_THRESH  = 4
@@ -80,6 +72,65 @@ def box_profile(p1, p2):
 def point_profiles(px, py):
     col = int(np.clip(px,0,W-1));  row = int(np.clip(py,0,H-1))
     return np.arange(W), frame[row,:], np.arange(H), frame[:,col]
+
+# ── CSV export ────────────────────────────────────────────────────────────────
+def save_csv(event):
+    if not rois:
+        print("No ROI to save."); return
+
+    roi = rois[0]
+    t   = roi['type']
+
+    # auto-increment filename so saves never overwrite each other
+    base = f"lineout_{t}"
+    i = 0
+    while os.path.exists(f"{base}_{i:03d}.csv"):
+        i += 1
+    path = f"{base}_{i:03d}.csv"
+
+    with open(path, 'w', newline='') as f:
+        w = csv.writer(f)
+
+        if t == 'line':
+            dist, prof = line_profile(roi['p1'], roi['p2'])
+            w.writerow(['# type', 'line'])
+            w.writerow(['# p1_x', roi['p1'][0], 'p1_y', roi['p1'][1]])
+            w.writerow(['# p2_x', roi['p2'][0], 'p2_y', roi['p2'][1]])
+            w.writerow(['distance_px', 'intensity'])
+            for d, v in zip(dist, prof):
+                w.writerow([f"{d:.4f}", f"{v:.4f}"])
+
+        elif t == 'box':
+            xs, prof = box_profile(roi['p1'], roi['p2'])
+            w.writerow(['# type', 'box'])
+            w.writerow(['# p1_x', roi['p1'][0], 'p1_y', roi['p1'][1]])
+            w.writerow(['# p2_x', roi['p2'][0], 'p2_y', roi['p2'][1]])
+            w.writerow(['column_px', 'summed_intensity'])
+            for x, v in zip(xs, prof):
+                w.writerow([int(x), f"{v:.4f}"])
+
+        elif t == 'point':
+            px, py = roi['p1']
+            xs, hprof, ys, vprof = point_profiles(px, py)
+            w.writerow(['# type', 'point'])
+            w.writerow(['# px', px, 'py', py])
+            w.writerow([])
+            w.writerow(['--- horizontal lineout ---'])
+            w.writerow(['column_px', 'intensity'])
+            for x, v in zip(xs, hprof):
+                w.writerow([int(x), f"{v:.4f}"])
+            w.writerow([])
+            w.writerow(['--- vertical lineout ---'])
+            w.writerow(['row_px', 'intensity'])
+            for y, v in zip(ys, vprof):
+                w.writerow([int(y), f"{v:.4f}"])
+
+    print(f"Saved → {os.path.abspath(path)}")
+    ax_btn.set_facecolor('0.75')          # brief flash to confirm
+    fig.canvas.draw_idle()
+    fig.canvas.flush_events()
+
+btn_save.on_clicked(save_csv)
 
 # ── Hit tests ─────────────────────────────────────────────────────────────────
 def disp_pt(pt):
@@ -132,8 +183,7 @@ def clear_roi_artists(roi):
 
 def remove_all_rois():
     global rois
-    for roi in rois:
-        clear_roi_artists(roi)
+    for roi in rois: clear_roi_artists(roi)
     rois = []
 
 def draw_roi(roi):
@@ -303,7 +353,8 @@ def on_release(event):
 def on_clim(val):
     im.set_clim(s_vmin.val, s_vmax.val); fig.canvas.draw_idle()
 
-s_vmin.on_changed(on_clim); s_vmax.on_changed(on_clim)
+s_vmin.on_changed(on_clim)
+s_vmax.on_changed(on_clim)
 fig.canvas.mpl_connect('button_press_event',   on_press)
 fig.canvas.mpl_connect('motion_notify_event',  on_motion)
 fig.canvas.mpl_connect('button_release_event', on_release)
