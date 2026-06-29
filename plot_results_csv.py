@@ -3,14 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ===================== EDIT THIS =====================
-csv_path = '07232_TS_shotn_results.csv'
+csv_path = '07237_TS_shotn_results.csv'
 # =======================================================
 
 df = pd.read_csv(csv_path)
-df = df.sort_values('r_um')
 
-x = df['r_um'].values
-xlabel = 'r (um)'
+if 'r_um' in df.columns and df['r_um'].notna().any():
+    df = df.sort_values('r_um')
+    x = df['r_um'].values
+    xlabel = 'r (um)'
+else:
+    df = df.sort_values('fiber')
+    x = df['fiber'].values
+    xlabel = 'Fiber number'
 
 colors = plt.get_cmap('tab10')
 
@@ -51,7 +56,7 @@ ax.set_title('Ion fraction vs r')
 ax.legend(fontsize=8, ncol=2)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig1, 'ifract')
+
 
 # --- Electron temperature ---
 fig2, ax = plt.subplots(figsize=(8, 5))
@@ -61,7 +66,7 @@ ax.set_xlabel(xlabel)
 ax.set_title('Electron temperature vs r')
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig2, 'Te')
+
 
 # --- Ion temperatures ---
 fig3, ax = plt.subplots(figsize=(8, 5))
@@ -73,7 +78,7 @@ ax.set_title('Ion temperature vs r')
 ax.legend(fontsize=8, ncol=2)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig3, 'Ti')
+
 
 # --- Electron speed ---
 fig4, ax = plt.subplots(figsize=(8, 5))
@@ -84,7 +89,7 @@ ax.set_xlabel(xlabel)
 ax.set_title('Electron speed vs r')
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig4, 've')
+
 
 # --- Ion speeds ---
 fig5, ax = plt.subplots(figsize=(8, 5))
@@ -97,7 +102,7 @@ ax.set_title('Ion speed vs r')
 ax.legend(fontsize=8, ncol=2)
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig5, 'vi')
+
 
 # --- Density ---
 fig6, ax = plt.subplots(figsize=(8, 5))
@@ -108,6 +113,6 @@ ax.set_xlabel(xlabel)
 ax.set_title('Density vs r')
 ax.grid(True, alpha=0.3)
 plt.tight_layout()
-save(fig6, 'n')
+
 
 plt.show()

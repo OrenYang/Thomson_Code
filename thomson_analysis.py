@@ -313,7 +313,7 @@ class Thomson:
             i.config["gamma"] = cal_bin.g
             if fiber is None or i.fiber in fiber:
                 try:
-                    iaw_result = fit_iaw(i.spectrum, i.wavelength, config=i.config)
+                    iaw_result = fit_iaw(i.spectrum, i.wavelength, config=i.config, fiber=i.fiber)
                     i.result = {
                         'best_fit':   iaw_result.best_fit,
                         'params':     {k: (p.value, p.stderr) for k, p in iaw_result.params.items()},
@@ -1025,7 +1025,7 @@ def _make_instr_func(sigma,gamma):
         return instr / instr.max()
     return instrument_function
 
-def fit_iaw(iaw_skw, iaw_wavelengths, config=None):
+def fit_iaw(iaw_skw, iaw_wavelengths, config=None, fiber=None):
     cfg = {**DEFAULT_CONFIG, **(config or {})}
     iaw_skw = iaw_skw / iaw_skw.max()
     iaw_wavelengths = iaw_wavelengths * u.nm
@@ -1063,12 +1063,10 @@ def fit_iaw(iaw_skw, iaw_wavelengths, config=None):
 
         if single_ion_speed:
             if i == 0:
-                # leader: the one shared floating velocity
                 params.add('ion_speed_0', value=cfg['ion_speed'][0],
                            min=cfg['ion_speed_min'][0], max=cfg['ion_speed_max'][0],
                            vary=cfg['ion_speed_vary'][0])
             else:
-                # every other ion ties to ion_speed_0
                 params.add(f'ion_speed_{i}', expr='ion_speed_0')
         else:
             params.add(f'ion_speed_{i}', value=cfg['ion_speed'][i],
@@ -1077,14 +1075,18 @@ def fit_iaw(iaw_skw, iaw_wavelengths, config=None):
 
     for i in range(len(cfg['ions']) - 1):
         params.add(f'sfract_{i}', value=sfracts[i], min=0, max=1, vary=cfg['ifract_vary'][i])
-    for i in range(len(cfg['ions']) - 1):
-        if i == 0:
-            expr = 'sfract_0'
-        else:
-            remaining = ' * '.join([f'(1 - sfract_{j})' for j in range(i)])
-            expr = f'sfract_{i} * {remaining}'
-        params.add(f'ifract_{i}', expr=expr)
-    params.add(f'ifract_{len(cfg["ions"])-1}', expr='1 - ' + ' - '.join([f'ifract_{j}' for j in range(len(cfg['ions'])-1)]))
+
+    if len(cfg['ions']) == 1:
+        params.add('ifract_0', value=1.0, vary=False)
+    else:
+        for i in range(len(cfg['ions']) - 1):
+            if i == 0:
+                expr = 'sfract_0'
+            else:
+                remaining = ' * '.join([f'(1 - sfract_{j})' for j in range(i)])
+                expr = f'sfract_{i} * {remaining}'
+            params.add(f'ifract_{i}', expr=expr)
+        params.add(f'ifract_{len(cfg["ions"])-1}', expr='1 - ' + ' - '.join([f'ifract_{j}' for j in range(len(cfg['ions'])-1)]))
     params.add('T_e_0', value=cfg['T_e'], min=cfg['T_e_min'], max=cfg['T_e_max'], vary=cfg['T_e_vary'])
     params.add('electron_speed_0', value=cfg['e_speed'], min=cfg['e_speed_min'],
                max=cfg['e_speed_max'], vary=cfg['e_speed_vary'])
@@ -1115,6 +1117,7 @@ def fit_iaw(iaw_skw, iaw_wavelengths, config=None):
     )
 
     best_fit_skw = iaw_result.best_fit
+    fitted = {k: p.value for k, p in iaw_result.params.items()}
 
     fig, ax = plt.subplots(ncols=1)
     ax.set_xlabel("Wavelength (nm)")
@@ -1123,7 +1126,41 @@ def fit_iaw(iaw_skw, iaw_wavelengths, config=None):
     ax.set_xlim(523, 530)
     ax.plot(iaw_wavelengths.value, iaw_skw, label="Data")
     ax.plot(iaw_wavelengths.value, best_fit_skw, label="Best-fit")
-    ax.legend(loc="upper right")
+
+    # --- Per-species isolated contributions ---
+    species_colors = plt.get_cmap('Set2')
+    n_species = len(cfg['ions'])
+    for i in range(n_species):
+        species_params = Parameters()
+        species_params.add('n', value=fitted['n'], vary=False)
+        species_params.add('T_i_0', value=fitted[f'T_i_{i}'], vary=False)
+        species_params.add('ion_speed_0', value=fitted[f'ion_speed_{i}'], vary=False)
+        species_params.add('ifract_0', value=1.0, vary=False)
+        species_params.add('T_e_0', value=fitted['T_e_0'], vary=False)
+        species_params.add('electron_speed_0', value=fitted['electron_speed_0'], vary=False)
+
+        species_settings = dict(settings)
+        species_settings['ions'] = [cfg['ions'][i]]
+        species_settings['ion_vdir'] = dk_hat.reshape(1, 3)
+        species_settings['electron_vdir'] = dk_hat.reshape(1, 3)
+        species_settings.pop('notch', None)  # don't notch the isolated-species curve
+
+        species_model = thomson.spectral_density_model(
+            iaw_wavelengths.to(u.m).value,
+            species_settings,
+            species_params,
+        )
+        species_curve = species_model.eval(
+            params=species_params,
+            wavelengths=iaw_wavelengths.to(u.m).value,
+        )
+        species_curve = species_curve * fitted[f'ifract_{i}']
+        ax.plot(iaw_wavelengths.value, species_curve,
+                color=species_colors((i + 3) % 10), alpha=0.7,
+                label=f"{cfg['ions'][i]} only")
+
+    ax.legend(loc="upper right", fontsize=8)
+    ax.set_title(f"Fiber {fiber}" if fiber is not None else "")
     plt.show(block=False)
     plt.pause(1)
     plt.close()
