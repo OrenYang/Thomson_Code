@@ -12,7 +12,7 @@ import copy
 shot=7232
 fiber=6
 nums=[1,2,3,4,5]
-CSV_PATH =f'/Users/orenyang/Documents/UCSD_Lab/cornell_bz_paper/ICOPS_presentation/ts/0{shot}_TS_shots/0{shot}_TS_shots_fiber{fiber}.csv'   # <- edit per fiber
+CSV_PATH =f'/Users/orenyang/Documents/UCSD_Lab/cornell_bz_paper/ICOPS_presentation/ts/07232_TS_shots/07232_TS_shots_fiber6.csv'   # <- edit per fiber
 
 for num in nums:
     df = pd.read_csv(CSV_PATH)
